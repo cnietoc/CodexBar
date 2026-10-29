@@ -52,7 +52,17 @@ All requests use `Authorization: Bearer <apiKey>`. CodexBar does not request or 
 
 For user-bound keys, personal usage is shown as the primary window. If the key has a team, its exact matching team
 budget is shown as the secondary window and becomes the automatic menu bar metric because that budget is enforced for
-the key. Team-only keys show that team budget as their sole usage window. Spend remains visible as an API-spend row
+the key.
+
+LiteLLM does not enforce a personal budget on keys that belong to a team; it enforces the team-member budget instead.
+When the user has no personal budget and the key has a team, the primary window therefore shows that member budget:
+the member's own `max_budget_in_team` from `/user/info` (`teams[].team_memberships[]`), otherwise the team's default
+from `GET /team/info?team_id=<team_id>` (`team_info.team_member_budget_table`). It uses the member's spend in that team
+(the membership row's `spend`, from `/user/info` or else the matching `team_memberships[]` row of `/team/info`) and the
+budget's `budget_reset_at`. User-wide spend covers every team, so it is never compared with a team-member limit: when no
+spend scoped to this team is available, no member budget is shown. This extra request is best effort: if it fails,
+returns no member budget, or names a different team, the budgets and spend already read are shown unchanged. A configured personal budget is always used as
+is, and team-only keys are unchanged. Team-only keys show that team budget as their sole usage window. Spend remains visible as an API-spend row
 when LiteLLM does not configure a budget.
 
 CLI text/cards and native menus show budget amounts as details, with actual reset dates separately; an absent reset

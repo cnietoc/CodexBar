@@ -128,8 +128,58 @@ defineProvider({
       email = userEmail || alias || preferred;
       personal = budget(user, "Personal");
       if (root.teams != null && !Array.isArray(root.teams)) return fail("invalid teams");
-      const teams = ((root.teams ?? []) as unknown[]).map((value) => budget(value, "Team", true));
+      const rawTeams = (root.teams ?? []) as unknown[];
+      const teams = rawTeams.map((value) => budget(value, "Team", true));
       team = teamID ? teams.find((value) => value.id === teamID) : undefined;
+      // Keys that belong to a team are limited by the team-member budget, not by a personal one: the member's own
+      // max_budget_in_team, otherwise the team's default. It is optional, so a failure keeps the budgets above.
+      const memberBudget = async () => {
+        const membership = rawTeams
+          .map((value) => object(value))
+          .find((value) => text(value.team_id) === teamID)?.team_memberships;
+        const mine = Array.isArray(membership)
+          ? membership.map((value) => object(value)).find((value) => text(value.user_id) === userID)
+          : undefined;
+        const own = mine?.litellm_budget_table == null ? {} : object(mine.litellm_budget_table);
+        let limit = number(own.max_budget),
+          resetAt = own.budget_reset_at,
+          spend = number(mine?.spend);
+        if (limit === undefined || spend === undefined) {
+          const root = object((await request("team/info", `?team_id=${encodeURIComponent(teamID!)}`, true)) ?? {});
+          const rawInfo = root.team_info;
+          if (rawInfo == null) return undefined;
+          const info = object(rawInfo);
+          const responseID = text(info.team_id);
+          if (responseID !== undefined && responseID !== teamID) return undefined;
+          if (limit === undefined) {
+            const fallback = info.team_member_budget_table == null ? {} : object(info.team_member_budget_table);
+            limit = number(fallback.max_budget);
+            resetAt = fallback.budget_reset_at;
+          }
+          if (spend === undefined) {
+            const members = info.team_memberships ?? root.team_memberships;
+            const row = Array.isArray(members)
+              ? members
+                  .map((value) => object(value))
+                  .find(
+                    (value) =>
+                      text(value.user_id) === userID && (value.team_id == null || text(value.team_id) === teamID),
+                  )
+              : undefined;
+            spend = number(row?.spend);
+          }
+        }
+        // User-wide spend spans every team, so it is never compared with a team-member limit.
+        if (limit === undefined || limit <= 0 || spend === undefined) return undefined;
+        return budget({ spend, max_budget: limit, budget_reset_at: resetAt }, "Personal");
+      };
+      if (teamID && !personal.window) {
+        personal =
+          (await memberBudget().catch((error: unknown) => {
+            void error;
+            return undefined;
+          })) ?? personal;
+      }
     } else {
       const root = object(await request("team/info", `?team_id=${encodeURIComponent(teamID!)}`));
       const rootID = nonempty(root.team_id);

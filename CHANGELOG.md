@@ -2,6 +2,10 @@
 
 ## 0.82.1 — Unreleased
 
+### Fixed
+
+- LiteLLM: show the team-member budget (a member's own, else the team default) as the Personal budget for team keys without a personal budget, with the member's spend and reset date (#4842).
+
 ## 0.82.0 — 2026-10-26
 
 ### Highlights

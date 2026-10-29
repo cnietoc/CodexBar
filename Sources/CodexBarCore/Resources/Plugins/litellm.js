@@ -5,6 +5,13 @@ function _nullishCoalesce(lhs, rhsFn) {
     return rhsFn();
   }
 }
+async function _asyncNullishCoalesce(lhs, rhsFn) {
+  if (lhs != null) {
+    return lhs;
+  } else {
+    return await rhsFn();
+  }
+}
 function _optionalChain(ops) {
   let lastAccessLHS = undefined;
   let value = ops[0];
@@ -161,8 +168,78 @@ defineProvider({
       email = userEmail || alias || preferred;
       personal = budget(user, "Personal");
       if (root.teams != null && !Array.isArray(root.teams)) return fail("invalid teams");
-      const teams = _nullishCoalesce(root.teams, () => []).map((value) => budget(value, "Team", true));
+      const rawTeams = _nullishCoalesce(root.teams, () => []);
+      const teams = rawTeams.map((value) => budget(value, "Team", true));
       team = teamID ? teams.find((value) => value.id === teamID) : undefined;
+      // Keys that belong to a team are limited by the team-member budget, not by a personal one: the member's own
+      // max_budget_in_team, otherwise the team's default. It is optional, so a failure keeps the budgets above.
+      const memberBudget = async () => {
+        const membership = _optionalChain([
+          rawTeams,
+          "access",
+          (_4) => _4.map,
+          "call",
+          (_5) => _5((value) => object(value)),
+          "access",
+          (_6) => _6.find,
+          "call",
+          (_7) => _7((value) => text(value.team_id) === teamID),
+          "optionalAccess",
+          (_8) => _8.team_memberships,
+        ]);
+        const mine = Array.isArray(membership)
+          ? membership.map((value) => object(value)).find((value) => text(value.user_id) === userID)
+          : undefined;
+        const own =
+          _optionalChain([mine, "optionalAccess", (_9) => _9.litellm_budget_table]) == null
+            ? {}
+            : object(mine.litellm_budget_table);
+        let limit = number(own.max_budget),
+          resetAt = own.budget_reset_at,
+          spend = number(_optionalChain([mine, "optionalAccess", (_10) => _10.spend]));
+        if (limit === undefined || spend === undefined) {
+          const root = object(
+            await _asyncNullishCoalesce(
+              await request("team/info", `?team_id=${encodeURIComponent(teamID)}`, true),
+              async () => ({}),
+            ),
+          );
+          const rawInfo = root.team_info;
+          if (rawInfo == null) return undefined;
+          const info = object(rawInfo);
+          const responseID = text(info.team_id);
+          if (responseID !== undefined && responseID !== teamID) return undefined;
+          if (limit === undefined) {
+            const fallback = info.team_member_budget_table == null ? {} : object(info.team_member_budget_table);
+            limit = number(fallback.max_budget);
+            resetAt = fallback.budget_reset_at;
+          }
+          if (spend === undefined) {
+            const members = _nullishCoalesce(info.team_memberships, () => root.team_memberships);
+            const row = Array.isArray(members)
+              ? members
+                  .map((value) => object(value))
+                  .find(
+                    (value) =>
+                      text(value.user_id) === userID && (value.team_id == null || text(value.team_id) === teamID),
+                  )
+              : undefined;
+            spend = number(_optionalChain([row, "optionalAccess", (_11) => _11.spend]));
+          }
+        }
+        // User-wide spend spans every team, so it is never compared with a team-member limit.
+        if (limit === undefined || limit <= 0 || spend === undefined) return undefined;
+        return budget({ spend, max_budget: limit, budget_reset_at: resetAt }, "Personal");
+      };
+      if (teamID && !personal.window) {
+        personal = await _asyncNullishCoalesce(
+          await memberBudget().catch((error) => {
+            void error;
+            return undefined;
+          }),
+          async () => personal,
+        );
+      }
     } else {
       const root = object(await request("team/info", `?team_id=${encodeURIComponent(teamID)}`));
       const rootID = nonempty(root.team_id);
@@ -229,12 +306,16 @@ defineProvider({
     const details =
       userID && ctx.settings.get("LITELLM_MODEL_USAGE_ENABLED") === "true" ? await modelActivity().catch(() => []) : [];
     return {
-      primary: _optionalChain([personal, "optionalAccess", (_4) => _4.window]),
-      secondary: _optionalChain([team, "optionalAccess", (_5) => _5.window]),
+      primary: _optionalChain([personal, "optionalAccess", (_12) => _12.window]),
+      secondary: _optionalChain([team, "optionalAccess", (_13) => _13.window]),
       cost: _nullishCoalesce(personal, () => team).cost,
       details,
       subscriptionExpiresAt: expires,
-      identity: { email, organization: _optionalChain([team, "optionalAccess", (_6) => _6.alias]), loginMethod: "api" },
+      identity: {
+        email,
+        organization: _optionalChain([team, "optionalAccess", (_14) => _14.alias]),
+        loginMethod: "api",
+      },
     };
   },
 });
