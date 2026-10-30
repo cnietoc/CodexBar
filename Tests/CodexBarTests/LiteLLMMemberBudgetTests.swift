@@ -171,7 +171,7 @@ struct LiteLLMMemberBudgetTests {
     }
 
     @Test(arguments: BundledPluginTestSupport.engines)
-    func `user-wide spend is never compared with the team-member budget`(engine: ProviderPluginEngineKind) async throws {
+    func `user-wide spend is never used for a member budget`(engine: ProviderPluginEngineKind) async throws {
         // $140 across every team, but no spend row for this team anywhere: nothing correctly scoped to show.
         let (snapshot, _) = try await Self.fetch(
             user: Self.user(memberships: "[]"), team: Self.team(), engine: engine)
@@ -212,5 +212,44 @@ struct LiteLLMMemberBudgetTests {
             user: Self.user(memberships: "[]"), team: Self.team(memberships: teamMemberships), engine: engine)
         #expect(snapshot.primary == nil)
         #expect(snapshot.providerCost?.period == "Personal spend")
+    }
+
+    @Test(arguments: BundledPluginTestSupport.engines)
+    func `user info membership rows from another team are ignored`(engine: ProviderPluginEngineKind) async throws {
+        let memberships = """
+        [{"user_id": "user-1", "team_id": "team-other", "spend": 90.0,
+          "litellm_budget_table": {"max_budget": 100.0}}]
+        """
+        let fallback = #"[{"user_id":"user-1","team_id":"team-1","spend":10.0}]"#
+        let (snapshot, paths) = try await Self.fetch(
+            user: Self.user(memberships: memberships),
+            team: Self.team(memberships: fallback),
+            engine: engine)
+        #expect(paths == ["/key/info", "/user/info", "/team/info"])
+        #expect(snapshot.primary?.usedPercent == 4)
+        #expect(snapshot.providerCost?.used == 10)
+        #expect(snapshot.providerCost?.limit == 250)
+    }
+
+    @Test(arguments: BundledPluginTestSupport.engines)
+    func `fallback member overrides precede defaults without replacing user overrides`(
+        engine: ProviderPluginEngineKind) async throws
+    {
+        let memberships = """
+        [{"user_id":"user-1","team_id":"team-1","spend":10.0,
+          "litellm_budget_table":{"max_budget":40.0,"budget_reset_at":"2026-11-09T00:00:00Z"}}]
+        """
+        let (fallback, _) = try await Self.fetch(
+            user: Self.user(memberships: "[]"), team: Self.team(memberships: memberships), engine: engine)
+        #expect(fallback.primary?.usedPercent == 25)
+        #expect(fallback.providerCost?.limit == 40)
+        #expect(fallback.primary?.resetsAt == ISO8601DateParser.parse("2026-11-09T00:00:00Z"))
+
+        let (own, _) = try await Self.fetch(
+            user: Self.user(membershipBudget: "20.0", membershipSpend: "null"),
+            team: Self.team(memberships: memberships),
+            engine: engine)
+        #expect(own.primary?.usedPercent == 50)
+        #expect(own.providerCost?.limit == 20)
     }
 }

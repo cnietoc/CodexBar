@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- LiteLLM: show the team-member budget (a member's own, else the team default) as the Personal budget for team keys without a personal budget, with the member's spend and reset date (#4842).
+- LiteLLM: show member overrides or the team's default budget with matching team-scoped spend, ignoring mismatched memberships (#4842, #4843). Thanks @cnietoc!
 - MiniMax: discover China web sessions and read the current console's quota percentages, boosted limits, and unlimited windows. (#4831, #4832) Thanks @tangwz!
 - Localization: correctly validate reordered plural arguments after ordinary placeholders. (#4817) Thanks @xuancao1953-1!
 - Codex: preserve established local cost coverage and catch-up progress when switching Codex homes (#4770, #4773). Thanks @harjothkhara!

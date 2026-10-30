@@ -46,7 +46,7 @@ The provider calls:
 
 1. `GET /key/info` to discover the authenticated key's `user_id` and `team_id`.
 2. `GET /user/info?user_id=<user_id>` to read personal spend, budget, and teams.
-3. For team-only keys without a `user_id`, `GET /team/info?team_id=<team_id>` to read team spend and budget.
+3. `GET /team/info?team_id=<team_id>` for team-only keys, or to fill missing member budgets and team-scoped spend for user-bound team keys.
 
 All requests use `Authorization: Bearer <apiKey>`. CodexBar does not request or store a LiteLLM master key.
 
@@ -54,15 +54,18 @@ For user-bound keys, personal usage is shown as the primary window. If the key h
 budget is shown as the secondary window and becomes the automatic menu bar metric because that budget is enforced for
 the key.
 
-LiteLLM does not enforce a personal budget on keys that belong to a team; it enforces the team-member budget instead.
-When the user has no personal budget and the key has a team, the primary window therefore shows that member budget:
-the member's own `max_budget_in_team` from `/user/info` (`teams[].team_memberships[]`), otherwise the team's default
-from `GET /team/info?team_id=<team_id>` (`team_info.team_member_budget_table`). It uses the member's spend in that team
-(the membership row's `spend`, from `/user/info` or else the matching `team_memberships[]` row of `/team/info`) and the
-budget's `budget_reset_at`. User-wide spend covers every team, so it is never compared with a team-member limit: when no
-spend scoped to this team is available, no member budget is shown. This extra request is best effort: if it fails,
-returns no member budget, or names a different team, the budgets and spend already read are shown unchanged. A configured personal budget is always used as
-is, and team-only keys are unchanged. Team-only keys show that team budget as their sole usage window. Spend remains visible as an API-spend row
+By default, LiteLLM applies team and team-member budgets to team keys; deployments that enable
+`apply_user_budget_to_team_keys` also enforce the personal user budget. CodexBar keeps a configured personal budget
+as the primary window. When it is absent and the key has a team, the primary window shows the member's own
+`max_budget_in_team` from a matching membership in `/user/info` (`teams[].team_memberships[].litellm_budget_table`)
+or `/team/info` (`team_memberships[].litellm_budget_table`), then the team's default
+(`team_info.team_member_budget_table`). An override already read from `/user/info` takes precedence. It pairs the limit
+and reset date with
+spend from the matching user and team membership in either response. User-wide spend is never substituted for
+team-scoped spend; if no matching spend is available, no member budget is shown. The extra request is best effort:
+unavailable or mismatched membership data preserves the personal spend and team budget already read.
+
+Team-only keys show the team budget as their sole usage window. Spend remains visible as an API-spend row
 when LiteLLM does not configure a budget.
 
 CLI text/cards and native menus show budget amounts as details, with actual reset dates separately; an absent reset
